@@ -138,3 +138,176 @@ group by fact_cliente, fact_total
 select * from Factura join item_factura on
 fact_tipo+fact_numero+fact_sucursal=item_tipo+item_numero+item_sucursal
 where fact_cliente = '01541' 
+
+USE GD2015C1
+/* 17. Escriba una consulta que retorne una estadística de ventas por año y mes para cada producto.
+La consulta debe retornar:
+PERIODO: Año y mes de la estadística con el formato YYYYMM
+PROD: Código de producto
+DETALLE: Detalle del producto
+CANTIDAD_VENDIDA= Cantidad vendida del producto en el periodo
+VENTAS_AÑO_ANT= Cantidad vendida del producto en el mismo mes del periodo
+pero del año anterior
+CANT_FACTURAS= Cantidad de facturas en las que se vendió el producto en el
+periodo
+La consulta no puede mostrar NULL en ninguna de sus columnas y debe estar ordenada
+por periodo y código de producto. */
+
+-- FORMAT(fact_fecha, 'yyyy-MM')
+select prod_codigo, prod_detalle, year(fact_fecha) as Anio, month(fact_fecha) as Mes, sum(item_cantidad) TotalSameYear, 
+		count(distinct fact_tipo+fact_numero+fact_sucursal),
+		isnull(
+		(select sum(i1.item_cantidad) from Item_Factura i1
+			JOIN factura f1 on f1.fact_tipo+f1.fact_numero+f1.fact_sucursal = i1.item_tipo+i1.item_numero+i1.item_sucursal
+			where i1.item_producto = prod_codigo 
+				and year(f1.fact_fecha) = year(fact_fecha)-1 and month(fact_fecha) = month(f1.fact_fecha)
+			group by i1.item_producto, year(f1.fact_fecha), month(f1.fact_fecha)),0) as TotalPreviousYear
+from producto 
+JOIN item_factura on prod_codigo = item_producto 
+JOIN factura on fact_tipo+fact_numero+fact_sucursal = item_tipo+item_numero+item_sucursal
+group by prod_codigo, prod_detalle, year(fact_fecha), month(fact_fecha)
+order by prod_codigo
+
+select * from Factura where fact_numero = '00098971'
+
+/* 18. Escriba una consulta que retorne una estadística de ventas para todos los rubros.
+La consulta debe retornar:
+DETALLE_RUBRO: Detalle del rubro
+VENTAS: Suma de las ventas en pesos de productos vendidos de dicho rubro
+PROD1: Código del producto más vendido de dicho rubro
+PROD2: Código del segundo producto más vendido de dicho rubro
+CLIENTE: Código del cliente que compro más productos del rubro en los últimos 30
+días */
+
+select rubr_id, rubr_detalle, sum(item_cantidad * item_precio) as VentasXRubro,
+				(select top 1 item_producto from Item_Factura 
+					JOIN Producto on prod_codigo = item_producto 
+					where rubr_id = prod_rubro
+					group by item_producto, prod_rubro -- No hace falta ya que al filtrar arriba solo me quedo con los productos de ese rubro
+					order by sum(item_cantidad) desc), -- Para el top 2 es idem esto
+				(select top 1 fact_cliente from Factura 
+					JOIN item_factura i1 on fact_tipo+fact_numero+fact_sucursal = i1.item_tipo+i1.item_numero+i1.item_sucursal
+					JOIN Producto on prod_codigo = item_producto
+					where rubr_id = prod_rubro and fact_fecha >= DATEADD(day, -30, GETDATE())
+					group by fact_cliente, prod_rubro -- Aca pasa lo mismo que arriba
+					order by sum(item_cantidad) desc)
+from Rubro JOIN Producto ON prod_rubro = rubr_id
+JOIN item_factura ON item_producto = prod_codigo
+group by rubr_id, rubr_detalle
+
+select * from Producto join Familia on fami_id = prod_familia
+order by prod_codigo, prod_familia
+
+/* 19. En virtud de una recategorizacion de productos referida a la familia de los mismos se
+solicita que desarrolle una consulta sql que retorne para todos los productos:
+ Codigo de producto
+ Detalle del producto
+ Codigo de la familia del producto
+ Detalle de la familia actual del producto
+ Codigo de la familia sugerido para el producto
+ Detalla de la familia sugerido para el producto
+La familia sugerida para un producto es la que poseen la mayoria de los productos cuyo
+detalle coinciden en los primeros 5 caracteres.
+En caso que 2 o mas familias pudieran ser sugeridas se debera seleccionar la de menor
+codigo. Solo se deben mostrar los productos para los cuales la familia actual sea
+diferente a la sugerida
+Los resultados deben ser ordenados por detalle de producto de manera ascendente */
+
+select prod_codigo, prod_detalle, fami_id, fami_detalle, (select top 1 p2.prod_familia from Producto p2
+					where LEFT(p2.prod_codigo, 5) = LEFT(Producto.prod_codigo, 5)
+					group by p2.prod_familia
+					order by count(p2.prod_familia), p2.prod_familia), (select fami_detalle from familia f2
+																where f2.fami_id = /*subquery anterior*/2)
+from Producto JOIN Familia on fami_id = prod_familia 
+-- where fami_id != misma subquery de arriba...
+
+/* 20. Escriba una consulta sql que retorne un ranking de los mejores 3 empleados del 2012
+Se debera retornar legajo, nombre y apellido, anio de ingreso, puntaje 2011, puntaje
+2012. El puntaje de cada empleado se calculara de la siguiente manera: para los que
+hayan vendido al menos 50 facturas el puntaje se calculara como la cantidad de facturas
+que superen los 100 pesos que haya vendido en el año, para los que tengan menos de 50
+facturas en el año el calculo del puntaje sera el 50% de cantidad de facturas realizadas
+por sus subordinados directos en dicho año */
+
+-- Fix typo -> Aparentemente (MAL MENCIONADO EN EL ENUNCIADO) parece que es el producto + vendido por cliente
+select clie_codigo, clie_razon_social, clie_limite_credito, (select top 1 item_producto from Item_Factura 
+												group by item_producto
+												order by sum(item_cantidad), item_producto)
+from cliente JOIN Factura on clie_codigo = fact_cliente
+JOIN Item_Factura on fact_tipo+fact_numero+fact_sucursal = item_tipo+item_numero+item_sucursal
+where year(fact_fecha) = 2012 -- Si no tiene ventas en 2012 y/o en 2011 sera <= a 2011
+group by clie_codigo, clie_razon_social, clie_limite_credito
+having sum(item_cantidad) > (select sum(i2.item_cantidad) from Item_Factura i2 
+		JOIN factura f2 on f2.fact_tipo+f2.fact_numero+f2.fact_sucursal = i2.item_tipo+i2.item_numero+i2.item_sucursal
+			where year(f2.fact_fecha) = 2011 and clie_codigo = f2.fact_cliente
+			group by f2.fact_cliente) 
+				AND sum(item_precio * item_cantidad) > 1.33*(select sum(i3.item_cantidad * i3.item_precio) 
+					from Item_Factura i3
+		JOIN factura f3 on f3.fact_tipo+f3.fact_numero+f3.fact_sucursal = i3.item_tipo+i3.item_numero+i3.item_sucursal
+			where year(f3.fact_fecha) = 2011 and clie_codigo = f3.fact_cliente
+			group by f3.fact_cliente)
+order by clie_codigo asc
+
+-- ! 
+ 
+select clie_codigo, (select sum(fact_total) from Factura fx
+							where clie_codigo = fx.fact_cliente and year(fact_fecha) = 2012) as TotalComprado,
+							-- Al igual que abajo, el group by no tendria sentido si tengo un solo codigo...
+					(select sum(ix.item_cantidad) from Item_Factura ix JOIN Factura fz on
+						fz.fact_tipo+fz.fact_numero+fz.fact_sucursal = ix.item_tipo+ix.item_numero+ix.item_sucursal
+						where year(fz.fact_fecha) = 2012 and clie_codigo = fz.fact_cliente) as CantidadComprada
+from Cliente JOIN Factura on fact_cliente = clie_codigo
+JOIN item_factura on fact_tipo+fact_numero+fact_sucursal = item_tipo+item_numero+item_sucursal 
+group by clie_codigo, year(fact_fecha)
+having count(distinct item_producto) > 5 and 
+				isnull((select count(distinct i2.item_producto) from Item_Factura i2
+						JOIN Factura f2 on f2.fact_tipo+f2.fact_numero+f2.fact_sucursal = i2.item_tipo+i2.item_numero+i2.item_sucursal
+						where year(f2.fact_fecha) = year(fact_fecha)+1 and clie_codigo = fact_cliente
+						/* group by f2.fact_cliente, year(f2.fact_fecha) */ ),0) > 5
+order by 
+	CASE 
+	   WHEN clie_codigo IN (select ...) THEN 0 -- 0 asigna mayor prioridad
+	   ELSE 1
+	END, clie_codigo
+
+-- !
+WITH TotalFacturacion2012 AS (
+    SELECT 
+        SUM(fact_total) AS TotalFacturadoGeneral
+    FROM Factura 
+    WHERE YEAR(fact_fecha) = 2012
+)
+
+SELECT 
+    SUM(fact_total) AS TotalFacturadoGeneral
+INTO #TotalFacturacion2012  -- Crea una tabla temporal llamada #TotalFacturacion2012
+FROM Factura 
+WHERE YEAR(fact_fecha) = 2012;
+
+SELECT * FROM #TotalFacturacion2012;  -- Verifica el resultado
+
+select fact_cliente, (select top 1 i3.item_producto from Item_Factura i3 
+		JOIN factura f3 on f3.fact_tipo+f3.fact_numero+f3.fact_sucursal = i3.item_tipo+i3.item_numero+i3.item_sucursal 
+				where fact_cliente = f3.fact_cliente and year(f3.fact_fecha) = 2012
+				group by i3.item_producto
+				order by sum(item_cantidad)) 'Codigo producto + comprado',
+					(select top 1 prod_detalle from Producto 
+											JOIN Item_Factura i2 on prod_codigo = item_producto
+		JOIN Factura f2 on f2.fact_tipo+f2.fact_numero+f2.fact_sucursal = i2.item_tipo+i2.item_numero+i2.item_sucursal 
+					where fact_cliente = f2.fact_cliente
+					group by prod_detalle
+					order by sum(i2.item_cantidad)) 'Nombre producto + comprado',
+			count(distinct item_producto) 'Cantidad productos distintos'
+from Factura
+JOIN Item_Factura on fact_tipo+fact_numero+fact_sucursal = item_tipo+item_numero+item_sucursal 
+JOIN Producto on item_producto = prod_codigo 
+where year(fact_fecha) = 2012
+group by fact_cliente
+having count(distinct prod_rubro) = (select count(distinct prod_rubro) from Producto 
+								JOIN Item_Factura on prod_codigo = item_producto)
+order by (select clie_razon_social from Cliente fb
+			where fact_cliente = fb.clie_codigo), 
+		 (select fx.fact_cliente from Factura fx JOIN Item_Factura ix on fx.fact_tipo+fx.fact_numero+fx.fact_sucursal = ix.item_tipo+ix.item_numero+ix.item_sucursal
+						where year(fx.fact_fecha) = 2012
+						group by fx.fact_cliente
+						having sum(fact_total) between ...
