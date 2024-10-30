@@ -270,44 +270,105 @@ order by
 	   ELSE 1
 	END, clie_codigo
 
--- !
-WITH TotalFacturacion2012 AS (
-    SELECT 
-        SUM(fact_total) AS TotalFacturadoGeneral
-    FROM Factura 
-    WHERE YEAR(fact_fecha) = 2012
-)
+USE GD2015C1
+GO
 
-SELECT 
-    SUM(fact_total) AS TotalFacturadoGeneral
-INTO #TotalFacturacion2012  -- Crea una tabla temporal llamada #TotalFacturacion2012
-FROM Factura 
-WHERE YEAR(fact_fecha) = 2012;
+-- ! Parcial 15/11/2022
 
-SELECT * FROM #TotalFacturacion2012;  -- Verifica el resultado
+SELECT f.fact_cliente, (select top 1 i2.item_producto from Item_Factura i2 JOIN Factura f2 ON f2.fact_tipo+f2.fact_numero+f2.fact_sucursal = i2.item_tipo+i2.item_numero+i2.item_sucursal
+			where year(f2.fact_fecha) = 2012 and f.fact_cliente = f2.fact_cliente
+			group by I2.item_producto
+			order by sum(i2.item_cantidad)),
+			-- Aca falta un select super largo para obtener el nombre (?
+			count(distinct item_producto), (select count(distinct i3.item_producto) from Item_Factura i3 JOIN Factura f3 ON f3.fact_tipo+f3.fact_numero+f3.fact_sucursal 
+				= i3.item_tipo+i3.item_numero+i3.item_sucursal JOIN Composicion c ON c.comp_producto = i3.item_producto
+			where year(f3.fact_fecha) = 2012 and f.fact_cliente = f3.fact_cliente
+			group by i3.item_producto)
+from Factura f JOIN Item_Factura i ON f.fact_tipo+f.fact_numero+f.fact_sucursal = i.item_tipo+i.item_numero+i.item_sucursal
+JOIN Producto p on p.prod_codigo = i.item_producto 
+where year(f.fact_fecha) = 2012
+group by f.fact_cliente
+having count(distinct p.prod_rubro) = (select count(distinct rubr_id) from Rubro)
+order by (select clie_razon_social from Cliente c
+				where f.fact_cliente = c.clie_codigo) , f.fact_cliente -- Aca falta antes de f.fact_cliente otro select para ordenar por clients que compraron entre un 20 y 30% del total facturado
 
-select fact_cliente, (select top 1 i3.item_producto from Item_Factura i3 
-		JOIN factura f3 on f3.fact_tipo+f3.fact_numero+f3.fact_sucursal = i3.item_tipo+i3.item_numero+i3.item_sucursal 
-				where fact_cliente = f3.fact_cliente and year(f3.fact_fecha) = 2012
-				group by i3.item_producto
-				order by sum(item_cantidad)) 'Codigo producto + comprado',
-					(select top 1 prod_detalle from Producto 
-											JOIN Item_Factura i2 on prod_codigo = item_producto
-		JOIN Factura f2 on f2.fact_tipo+f2.fact_numero+f2.fact_sucursal = i2.item_tipo+i2.item_numero+i2.item_sucursal 
-					where fact_cliente = f2.fact_cliente
-					group by prod_detalle
-					order by sum(i2.item_cantidad)) 'Nombre producto + comprado',
-			count(distinct item_producto) 'Cantidad productos distintos'
-from Factura
-JOIN Item_Factura on fact_tipo+fact_numero+fact_sucursal = item_tipo+item_numero+item_sucursal 
-JOIN Producto on item_producto = prod_codigo 
-where year(fact_fecha) = 2012
-group by fact_cliente
-having count(distinct prod_rubro) = (select count(distinct prod_rubro) from Producto 
-								JOIN Item_Factura on prod_codigo = item_producto)
-order by (select clie_razon_social from Cliente fb
-			where fact_cliente = fb.clie_codigo), 
-		 (select fx.fact_cliente from Factura fx JOIN Item_Factura ix on fx.fact_tipo+fx.fact_numero+fx.fact_sucursal = ix.item_tipo+ix.item_numero+ix.item_sucursal
-						where year(fx.fact_fecha) = 2012
-						group by fx.fact_cliente
-						having sum(fact_total) between ...
+-- ! Parcial 12/11/2022
+
+SELECT f.fact_cliente, (select clie_razon_social from Cliente c
+								where f.fact_cliente = c.clie_codigo), 
+						(select top 1 i2.item_producto from Item_Factura i2 JOIN Factura f2 ON f2.fact_tipo+f2.fact_numero+f2.fact_sucursal = i2.item_tipo+i2.item_numero+i2.item_sucursal
+								where year(f2.fact_fecha) = 2012 and f.fact_cliente = f2.fact_cliente
+								group by I2.item_producto
+								order by sum(i2.item_cantidad) desc), 
+						-- Aca va el select del detalle del producto anterior que me da paja escribir...
+						count(distinct item_producto), 
+						(select sum(i3.item_cantidad) from Item_Factura i3 JOIN Factura f3 ON f3.fact_tipo+f3.fact_numero+f3.fact_sucursal 
+									= i3.item_tipo+i3.item_numero+i3.item_sucursal JOIN Composicion c ON c.comp_producto = i3.item_producto
+								where year(f3.fact_fecha) = 2012 and f.fact_cliente = f3.fact_cliente) -- Se podria hacer sin el JOIN con composicion...
+FROM Factura f JOIN Item_Factura i ON f.fact_tipo+f.fact_numero+f.fact_sucursal = i.item_tipo+i.item_numero+i.item_sucursal
+where year(f.fact_fecha) = 2012
+group by f.fact_cliente
+having sum(item_Cantidad * item_precio) > (select avg(fact_total) from Factura 
+								where year(fact_fecha) = 2012)
+order by (select 1 from Item_Factura i4 JOIN Factura f4 ON f4.fact_tipo+f4.fact_numero+f4.fact_sucursal = i4.item_tipo+i4.item_numero+i4.item_sucursal
+			where year(f4.fact_fecha) = 2012 and f.fact_cliente = f4.fact_cliente
+			having count(distinct i4.item_producto) between 5 and 10)
+
+-- Otra mejor opcion para el order by usando CASE
+ORDER BY 
+    CASE 
+        WHEN COUNT distinct i.item_producto BETWEEN 5 AND 10 
+        THEN 1 
+        ELSE 0 
+    END DESC;
+
+-- ! RECUPERATORIO 4/7/2023
+
+SELECT rtrim(p.prod_codigo) + '-' + rtrim(p.prod_detalle), -- Uso de RTRIM, no me acuerdo como era 
+		(select top 1 empl_nombre from Item_Factura i JOIN Factura f ON f.fact_tipo+f.fact_numero+f.fact_sucursal = i.item_tipo+i.item_numero+i.item_sucursal
+				JOIN Empleado e ON e.empl_codigo = fact_vendedor
+							where i.item_producto = p.prod_codigo
+							group by fact_vendedor
+							order by sum(i.item_cantidad)),
+		(select count(distinct stoc_deposito) from STOCK 
+				where stoc_producto = p.prod_codigo and stoc_cantidad > 0),
+		(select top 1 f2.fact_cliente from Item_Factura i3 JOIN Factura f2 ON f2.fact_tipo+f2.fact_numero+f2.fact_sucursal = i3.item_tipo+i3.item_numero+i3.item_sucursal
+				where i3.item_producto = p.prod_codigo
+				group by f2.fact_cliente
+				order by sum(i3.item_cantidad)),
+		(select top 1 sum(i4.Item_cantidad * i4.item_precio) from Item_Factura i4 JOIN Factura f3 ON f3.fact_tipo+f3.fact_numero+f3.fact_sucursal = i4.item_tipo+i4.item_numero+i4.item_sucursal
+				where i4.item_producto = p.prod_codigo
+				group by f3.fact_cliente
+				order by sum(i4.item_cantidad))
+FROM Producto p 
+where p.prod_codigo IN (SELECT top 5 i1.item_producto FROM Item_Factura i1 
+							group by i1.item_producto
+							order by sum(i1.item_cantidad * i1.item_precio) DESC)
+	OR p.prod_codigo IN (SELECT top 10 i2.item_producto FROM Item_Factura i2
+							group by i2.item_producto
+							order by sum(i2.item_cantidad * i2.item_precio) ASC)
+
+-- El order by se puede hacer nuevamente con un SELECT / CASE o bien JOINEAR con Item_factura
+
+-- ! PARCIAL 4/7/2023
+
+SELECT zona_detalle, count(distinct depo_detalle), 
+					(select count(distinct stoc_producto) from DEPOSITO d JOIN STOCK s on s.stoc_deposito = d.depo_codigo 
+					where zona_detalle = d.depo_zona 
+							and stoc_producto IN (select comp_producto from Composicion) -- ojo aca, no hace falta JOINEAR con nadie!
+					group by d.depo_zona),
+					(select top 1 item_producto from Item_Factura i JOIN Factura f ON f.fact_tipo+f.fact_numero+f.fact_sucursal = i.item_tipo+i.item_numero+i.item_sucursal
+							JOIN STOCK s on s.stoc_producto = i.item_producto -- creo que nisiquiera hace falta JOINEAR, y si fuera necesario el JOIN podria estar en una sub-query
+							where year(f.fact_fecha) = 2012 and stoc_cantidad > 0 
+								and stoc_deposito IN (select depo_codigo from DEPOSITO where depo_zona = zona_codigo)
+								group by item_producto
+							order by sum(i.item_cantidad)),
+					(select top 1 depo_encargado From DEPOSITO JOIN Factura on fact_vendedor = depo_encargado
+							where depo_zona = zona_codigo
+							group by depo_encargado
+							order by sum(fact_total) desc)
+from Zona JOIN DEPOSITO ON depo_zona = zona_codigo
+group by zona_detalle, zona_codigo
+having count(distinct depo_detalle) >= 3
+
+-- VER LO DEL ORDER BY
